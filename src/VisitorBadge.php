@@ -929,8 +929,9 @@ class VisitorBadge implements CommandInterface
             );
         }
 
-        $output = chr(27) . 'ia' . chr(1);
+        $output = $this->invalidateRasterParser();
         $output .= chr(27) . chr(64);
+        $output .= chr(27) . 'ia' . chr(1);
         $output .= chr(27) . 'iS';
         $output .= $this->rasterPrintInformation(imagesy($image));
         $output .= chr(27) . 'iM' . chr(64);
@@ -941,6 +942,11 @@ class VisitorBadge implements CommandInterface
         $output .= chr(26);
 
         return $output;
+    }
+
+    protected function invalidateRasterParser()
+    {
+        return str_repeat(chr(0), 400);
     }
 
     protected function rasterPrintInformation($rasterRows)
