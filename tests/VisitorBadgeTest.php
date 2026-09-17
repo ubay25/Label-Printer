@@ -169,6 +169,33 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $this->assertEquals(chr(26), substr($output, -1));
     }
 
+    public function testPrintToWritesCompleteRasterStream()
+    {
+        $badge = new VisitorBadge(
+            696,
+            509,
+            [
+                'visitor_name' => 'Stuart Burgess',
+                'company_name' => 'A&D Buildings Ltd',
+                'validity_date' => '09 Sept 2026',
+                'host_name' => 'John Smith',
+                'visitor_photo' => __DIR__ . '/fixtures/visitor-photo.png',
+                'logo' => __DIR__ . '/fixtures/institution-logo.png'
+            ]
+        );
+
+        $stream = fopen('php://temp', 'w+');
+
+        $badge->printTo($stream);
+
+        rewind($stream);
+        $output = stream_get_contents($stream);
+        fclose($stream);
+
+        $this->assertEquals($badge->read(), $output);
+        $this->assertEquals(chr(26), substr($output, -1));
+    }
+
     public function testPrintRejectsPortraitDimensionsThatExceedPrintHead()
     {
         $this->setExpectedException('InvalidArgumentException');

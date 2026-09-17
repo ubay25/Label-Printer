@@ -61,6 +61,52 @@ class VisitorBadge implements CommandInterface
         return $path;
     }
 
+    public function printTo($resource)
+    {
+        if (! is_resource($resource)) {
+            throw new \InvalidArgumentException('An invalid print resource has been provided.');
+        }
+
+        $this->writeFully($resource, $this->read());
+    }
+
+    protected function writeFully($resource, $data)
+    {
+        if (function_exists('stream_set_blocking')) {
+            @stream_set_blocking($resource, true);
+        }
+
+        if (function_exists('stream_set_write_buffer')) {
+            @stream_set_write_buffer($resource, 0);
+        }
+
+        $length = strlen($data);
+        $offset = 0;
+        $chunkSize = 4096;
+        $blockedWrites = 0;
+
+        while ($offset < $length) {
+            $chunk = substr($data, $offset, min($chunkSize, $length - $offset));
+            $written = @fwrite($resource, $chunk);
+
+            if ($written === false || $written === 0) {
+                $blockedWrites++;
+
+                if ($blockedWrites > 100) {
+                    throw new \RuntimeException('Printer did not accept visitor badge data.');
+                }
+
+                usleep(100000);
+                continue;
+            }
+
+            $offset += $written;
+            $blockedWrites = 0;
+        }
+
+        fflush($resource);
+    }
+
     protected function getLayout()
     {
         $scale = $this->layoutScale();
