@@ -94,13 +94,15 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $output = stream_get_contents($stream);
         fclose($stream);
 
-        $this->assertEquals(129903, strlen($output));
+        $this->assertEquals(129904, strlen($output));
         $this->assertEquals(str_repeat(chr(0), 400), substr($output, 6, 400));
         $this->assertEquals(
-            '1b6961301b40' . str_repeat('00', 400) . '1b401b6961011b69531b697a8e0a3e00b802000000001b694d401b6941011b694b091b6964230077',
-            bin2hex(substr($output, 0, 446))
+            '1b6961301b40' . str_repeat('00', 400) . '1b401b6961011b6921011b697a8e0a3e00b802000000021b694d401b6941011b694b091b6964230077',
+            bin2hex(substr($output, 0, 447))
         );
         $this->assertContains(chr(27) . 'ia' . chr(1), $output);
+        $this->assertContains(chr(27) . 'i!' . chr(1), $output);
+        $this->assertFalse(strpos($output, chr(27) . 'iS') !== false);
         $this->assertContains(chr(27) . 'iK' . chr(9), $output);
         $this->assertEquals(696, substr_count($output, 'w' . chr(1) . chr(90)));
         $this->assertEquals(696, substr_count($output, 'w' . chr(2) . chr(90)));
@@ -133,9 +135,11 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $output = stream_get_contents($stream);
         fclose($stream);
 
-        $this->assertEquals(129903, strlen($output));
+        $this->assertEquals(129904, strlen($output));
         $this->assertEquals(str_repeat(chr(0), 400), substr($output, 6, 400));
         $this->assertContains(chr(27) . 'ia' . chr(1), $output);
+        $this->assertContains(chr(27) . 'i!' . chr(1), $output);
+        $this->assertFalse(strpos($output, chr(27) . 'iS') !== false);
         $this->assertContains(chr(27) . 'iK' . chr(9), $output);
         $this->assertEquals(696, substr_count($output, 'w' . chr(1) . chr(90)));
         $this->assertEquals(696, substr_count($output, 'w' . chr(2) . chr(90)));
@@ -160,9 +164,11 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
 
         $output = $badge->read();
 
-        $this->assertEquals(129896, strlen($output));
+        $this->assertEquals(129897, strlen($output));
         $this->assertEquals(str_repeat(chr(0), 400), substr($output, 0, 400));
         $this->assertContains(chr(27) . 'ia' . chr(1), $output);
+        $this->assertContains(chr(27) . 'i!' . chr(1), $output);
+        $this->assertFalse(strpos($output, chr(27) . 'iS') !== false);
         $this->assertContains(chr(27) . 'iK' . chr(9), $output);
         $this->assertEquals(696, substr_count($output, 'w' . chr(1) . chr(90)));
         $this->assertEquals(696, substr_count($output, 'w' . chr(2) . chr(90)));

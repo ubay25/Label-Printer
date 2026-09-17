@@ -68,6 +68,7 @@ class VisitorBadge implements CommandInterface
         }
 
         $this->writeFully($resource, $this->read());
+        $this->finishPrintResource($resource);
     }
 
     protected function writeFully($resource, $data)
@@ -105,6 +106,13 @@ class VisitorBadge implements CommandInterface
         }
 
         fflush($resource);
+    }
+
+    protected function finishPrintResource($resource)
+    {
+        if (function_exists('stream_socket_shutdown') && defined('STREAM_SHUT_WR')) {
+            @stream_socket_shutdown($resource, STREAM_SHUT_WR);
+        }
     }
 
     protected function getLayout()
@@ -978,7 +986,7 @@ class VisitorBadge implements CommandInterface
         $output = $this->invalidateRasterParser();
         $output .= chr(27) . chr(64);
         $output .= chr(27) . 'ia' . chr(1);
-        $output .= chr(27) . 'iS';
+        $output .= chr(27) . 'i!' . chr(1);
         $output .= $this->rasterPrintInformation(imagesy($image));
         $output .= chr(27) . 'iM' . chr(64);
         $output .= chr(27) . 'iA' . chr(1);
@@ -1004,7 +1012,7 @@ class VisitorBadge implements CommandInterface
             chr(0) .
             $this->littleEndian32($rasterRows) .
             chr(0) .
-            chr(0);
+            chr(2);
     }
 
     protected function twoColorRasterRows($image, $ditherMask = null)
