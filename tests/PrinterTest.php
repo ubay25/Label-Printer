@@ -3,6 +3,7 @@
 use Talal\LabelPrinter\Printer;
 use Talal\LabelPrinter\Mode;
 use Talal\LabelPrinter\Command;
+use Talal\LabelPrinter\Command\CommandInterface;
 
 class PrinterTest extends PHPUnit_Framework_TestCase
 {
@@ -38,6 +39,16 @@ class PrinterTest extends PHPUnit_Framework_TestCase
         $this->assertEquals('1b6961335e49495e54533030311b455e4646', bin2hex(stream_get_contents($this->stream)));
     }
 
+    public function testPrintLabelDoesNotAppendProcessCommandAfterFinalRasterCommand()
+    {
+        $printer = new Printer(new Mode\Escp($this->stream));
+        $printer->addCommand(new FinalRasterCommandStub());
+        $printer->printLabel();
+
+        rewind($this->stream);
+        $this->assertEquals('1b6961301b40646174611a', bin2hex(stream_get_contents($this->stream)));
+    }
+
     public function testGetMode()
     {
         $printer = new Printer(new Mode\Escp($this->stream));
@@ -67,5 +78,13 @@ class PrinterTest extends PHPUnit_Framework_TestCase
         $this->setExpectedException('InvalidArgumentException');
         
         new Printer(new Mode\Escp('non-existing'));
+    }
+}
+
+class FinalRasterCommandStub implements CommandInterface
+{
+    public function read()
+    {
+        return 'data' . chr(26);
     }
 }

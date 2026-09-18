@@ -94,7 +94,7 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $output = stream_get_contents($stream);
         fclose($stream);
 
-        $this->assertEquals(129904, strlen($output));
+        $this->assertEquals(129903, strlen($output));
         $this->assertEquals(str_repeat(chr(0), 400), substr($output, 6, 400));
         $this->assertEquals(
             '1b6961301b40' . str_repeat('00', 400) . '1b401b6961011b6921011b697a8e0a3e00b802000000021b694d401b6941011b694b091b6964230077',
@@ -106,8 +106,7 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $this->assertContains(chr(27) . 'iK' . chr(9), $output);
         $this->assertEquals(696, substr_count($output, 'w' . chr(1) . chr(90)));
         $this->assertEquals(696, substr_count($output, 'w' . chr(2) . chr(90)));
-        $this->assertEquals(chr(26), substr($output, -2, 1));
-        $this->assertEquals(chr(12), substr($output, -1));
+        $this->assertEquals(chr(26), substr($output, -1));
     }
 
     public function testPrintWithoutPhotoThroughEscp()
@@ -135,7 +134,7 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $output = stream_get_contents($stream);
         fclose($stream);
 
-        $this->assertEquals(129904, strlen($output));
+        $this->assertEquals(129903, strlen($output));
         $this->assertEquals(str_repeat(chr(0), 400), substr($output, 6, 400));
         $this->assertContains(chr(27) . 'ia' . chr(1), $output);
         $this->assertContains(chr(27) . 'i!' . chr(1), $output);
@@ -143,8 +142,7 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $this->assertContains(chr(27) . 'iK' . chr(9), $output);
         $this->assertEquals(696, substr_count($output, 'w' . chr(1) . chr(90)));
         $this->assertEquals(696, substr_count($output, 'w' . chr(2) . chr(90)));
-        $this->assertEquals(chr(26), substr($output, -2, 1));
-        $this->assertEquals(chr(12), substr($output, -1));
+        $this->assertEquals(chr(26), substr($output, -1));
     }
 
     public function testPrintRotatesRasterRowsForLandscape()

@@ -50,10 +50,20 @@ class Printer
      */
     public function printLabel()
     {
+        $lastOutput = '';
+
         foreach ($this->mode->getCommands() as $command) {
-            $this->mode->sendCommand($command->read());
+            $lastOutput = $command->read();
+            $this->mode->sendCommand($lastOutput);
         }
 
-        $this->mode->process();
+        if (! $this->commandPrintedLabel($lastOutput)) {
+            $this->mode->process();
+        }
+    }
+
+    protected function commandPrintedLabel($output)
+    {
+        return $output !== '' && substr($output, -1) === chr(26);
     }
 }
