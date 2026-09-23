@@ -209,7 +209,7 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $this->assertEquals(chr(26), substr($output, -1));
     }
 
-    public function testPrintToVerifiesStatusByDefaultAndFailsFastWhenPrinterIsUnresponsive()
+    public function testPrintToWithRequireStatusReplyFailsFastWhenPrinterIsUnresponsive()
     {
         $badge = new VisitorBadge(
             696,
@@ -222,8 +222,6 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
             ]
         );
 
-        // Use a short timeout so the test doesn't wait on requestStatus()'s
-        // default 3-second window.
         $badge = $this->getMock('Talal\LabelPrinter\VisitorBadge', ['requestStatus'], [
             696,
             509,
@@ -241,8 +239,39 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
             'Printer did not respond to a status request before printing'
         );
 
+        // requireStatusReply=true opts into the strict behaviour; it is NOT
+        // the default (see printTo()'s docblock: a missing reply is common
+        // and not by itself fatal over a raw network connection).
+        $stream = fopen('php://temp', 'w+');
+        $badge->printTo($stream, true, 3, true);
+    }
+
+    public function testPrintToVerifiesStatusByDefaultButProceedsWhenPrinterSimplyDoesNotReply()
+    {
+        // Default behaviour (requireStatusReply=false): a missing status
+        // reply is common on raw network/port-9100 connections and is not
+        // by itself treated as proof the printer can't accept the job, so
+        // the write should still happen.
+        $badge = $this->getMock('Talal\LabelPrinter\VisitorBadge', ['requestStatus'], [
+            696,
+            509,
+            [
+                'visitor_name' => 'John Doe',
+                'company_name' => 'Example Ltd',
+                'validity_date' => '2026-09-08',
+                'host_name' => 'Jane Smith'
+            ]
+        ]);
+        $badge->expects($this->once())->method('requestStatus')->willReturn(null);
+
         $stream = fopen('php://temp', 'w+');
         $badge->printTo($stream);
+
+        rewind($stream);
+        $output = stream_get_contents($stream);
+        fclose($stream);
+
+        $this->assertEquals($badge->read(), $output);
     }
 
     public function testRequestStatusSendsInvalidateInitializeThenStatusRequestCommand()

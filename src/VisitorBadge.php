@@ -74,6 +74,18 @@ class VisitorBadge implements CommandInterface
      * already in, which will silently corrupt output (or compound an
      * existing wedge) if the printer is already erroring or unresponsive.
      *
+     * A reply that reports an error is unambiguous, so it is always fatal.
+     * By contrast, no reply at all is NOT fatal by default: the spec's own
+     * "Normal Flow for Network (Standard TCP/IP port) Connection" (section
+     * 5.9) is the only one of its five connection-type flow charts that does
+     * not show a status request/response exchange — many raw port-9100
+     * network paths simply don't answer this query synchronously over the
+     * print-data socket even on a healthy printer. Treating a missing reply
+     * as fatal by default would silently stop every print on such a setup,
+     * which is worse than the problem this check exists to catch. Pass
+     * $requireStatusReply=true to opt into the stricter USB/serial-style
+     * behaviour if your connection is known to reply.
+     *
      * @param resource $resource
      * @param bool     $verifyStatus Set false only if $resource cannot do a
      *                                blocking read (e.g. a write-only test
@@ -81,8 +93,10 @@ class VisitorBadge implements CommandInterface
      *                                fire-and-forget behaviour.
      * @param float    $statusTimeoutSeconds How long to wait for the printer
      *                                to answer the pre-flight status request.
+     * @param bool     $requireStatusReply Throw if the printer doesn't reply
+     *                                at all, instead of proceeding anyway.
      */
-    public function printTo($resource, $verifyStatus = true, $statusTimeoutSeconds = 3)
+    public function printTo($resource, $verifyStatus = true, $statusTimeoutSeconds = 3, $requireStatusReply = false)
     {
         if (! is_resource($resource)) {
             throw new \InvalidArgumentException('An invalid print resource has been provided.');
@@ -91,15 +105,19 @@ class VisitorBadge implements CommandInterface
         if ($verifyStatus) {
             $status = $this->requestStatus($resource, $statusTimeoutSeconds);
 
-            if ($status === null) {
+            if ($status === null && $requireStatusReply) {
                 throw new \RuntimeException(
                     'Printer did not respond to a status request before printing. It is likely ' .
                     'stuck from a previous job (or unreachable); power-cycle it and try again. ' .
-                    'Pass $verifyStatus=false to printTo() to bypass this check.'
+                    'Pass $requireStatusReply=false (the default) to printTo() to proceed anyway ' .
+                    'when the printer does not answer this query, or $verifyStatus=false to skip ' .
+                    'the check entirely.'
                 );
             }
 
-            $this->assertPrinterReady($status);
+            if ($status !== null) {
+                $this->assertPrinterReady($status);
+            }
         }
 
         $this->writeFully($resource, $this->read());
