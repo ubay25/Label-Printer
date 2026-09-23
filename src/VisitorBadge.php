@@ -61,14 +61,68 @@ class VisitorBadge implements CommandInterface
         return $path;
     }
 
-    public function printTo($resource)
+    /**
+     * Sends the badge to the printer.
+     *
+     * Per Brother's official Raster Command Reference (QL-800/810W/820NWB,
+     * v1.01), "1. Printing Using Raster Commands": the documented flow is
+     * (1) open the port, (2) request and check the printer's status, (3)
+     * send the print data only if that status shows compatible media and no
+     * error, (4)/(5) print and let completion be tracked, (6) close the
+     * port. Steps (2)/(3) were previously skipped entirely — this method
+     * blindly wrote raster data regardless of what state the printer was
+     * already in, which will silently corrupt output (or compound an
+     * existing wedge) if the printer is already erroring or unresponsive.
+     *
+     * @param resource $resource
+     * @param bool     $verifyStatus Set false only if $resource cannot do a
+     *                                blocking read (e.g. a write-only test
+     *                                double) and you accept the old
+     *                                fire-and-forget behaviour.
+     * @param float    $statusTimeoutSeconds How long to wait for the printer
+     *                                to answer the pre-flight status request.
+     */
+    public function printTo($resource, $verifyStatus = true, $statusTimeoutSeconds = 3)
     {
         if (! is_resource($resource)) {
             throw new \InvalidArgumentException('An invalid print resource has been provided.');
         }
 
+        if ($verifyStatus) {
+            $status = $this->requestStatus($resource, $statusTimeoutSeconds);
+
+            if ($status === null) {
+                throw new \RuntimeException(
+                    'Printer did not respond to a status request before printing. It is likely ' .
+                    'stuck from a previous job (or unreachable); power-cycle it and try again. ' .
+                    'Pass $verifyStatus=false to printTo() to bypass this check.'
+                );
+            }
+
+            $this->assertPrinterReady($status);
+        }
+
         $this->writeFully($resource, $this->read());
         $this->finishPrintResource($resource);
+    }
+
+    /**
+     * Throws with a fully decoded reason if the status reply (from
+     * requestStatus()) indicates the printer cannot accept a job right now.
+     *
+     * @param string $status Raw 32-byte reply from requestStatus().
+     */
+    protected function assertPrinterReady($status)
+    {
+        $bytes = array_values(unpack('C32', $status));
+
+        if ($bytes[8] === 0 && $bytes[9] === 0) {
+            return;
+        }
+
+        throw new \RuntimeException(
+            'Printer reported an error before printing: ' . $this->describeStatus($status)
+        );
     }
 
     protected function writeFully($resource, $data)
@@ -113,6 +167,145 @@ class VisitorBadge implements CommandInterface
         if (function_exists('stream_socket_shutdown') && defined('STREAM_SHUT_WR')) {
             @stream_socket_shutdown($resource, STREAM_SHUT_WR);
         }
+    }
+
+    /**
+     * Sends a status information request and reads back the printer's fixed
+     * 32-byte status reply, if any. Per the official Raster Command
+     * Reference, "1. Printing Using Raster Commands": this should be sent
+     * once before print data, to confirm compatible media is loaded and no
+     * error is active; printTo() now does this automatically.
+     *
+     * The request is prefixed with the same 400-byte invalidate + Initialize
+     * sequence used at the start of a print job (see invalidateRasterParser()
+     * and the "NULL Invalidate" command description), so this is safe to
+     * call on a freshly opened connection even if the printer's parser was
+     * left in an unknown state by a previous job — the NUL bytes are
+     * consumed as no-ops (or as the tail of an incomplete previous command)
+     * until the parser is guaranteed back in a clean, command-ready state
+     * before ESC i S is sent.
+     *
+     * A null return is itself meaningful: the printer's command interpreter
+     * did not respond within the timeout at all, i.e. it is wedged or
+     * unreachable — this is the strongest, most direct evidence of the
+     * "stuck" behaviour we've been chasing, so log/report this if it recurs.
+     *
+     * @param resource $resource
+     * @param float    $timeoutSeconds
+     * @return string|null
+     */
+    public function requestStatus($resource, $timeoutSeconds = 3)
+    {
+        if (! is_resource($resource)) {
+            throw new \InvalidArgumentException('An invalid print resource has been provided.');
+        }
+
+        $this->writeFully(
+            $resource,
+            $this->invalidateRasterParser() . chr(27) . chr(64) . chr(27) . 'iS'
+        );
+
+        if (function_exists('stream_set_timeout')) {
+            @stream_set_timeout($resource, $timeoutSeconds);
+        }
+
+        $response = '';
+        $deadline = microtime(true) + $timeoutSeconds;
+
+        while (strlen($response) < 32 && microtime(true) < $deadline) {
+            $chunk = @fread($resource, 32 - strlen($response));
+
+            if ($chunk === false || $chunk === '') {
+                $meta = function_exists('stream_get_meta_data') ? @stream_get_meta_data($resource) : [];
+
+                if (! empty($meta['timed_out']) || ! empty($meta['eof'])) {
+                    break;
+                }
+
+                usleep(50000);
+                continue;
+            }
+
+            $response .= $chunk;
+        }
+
+        return strlen($response) === 32 ? $response : null;
+    }
+
+    /**
+     * Fully decodes a requestStatus() reply for logging/diagnostics, per the
+     * official byte layout and bit tables ("ESC i S Status information
+     * request", offsets 0-31).
+     *
+     * @param string|null $status
+     * @return string
+     */
+    public function describeStatus($status)
+    {
+        if ($status === null || strlen($status) < 32) {
+            return 'No status reply received (printer command interpreter is not responding).';
+        }
+
+        $bytes = array_values(unpack('C32', $status));
+        $errors = array_merge(
+            $this->decodeStatusFlags($bytes[8], [
+                0x01 => 'no media',
+                0x02 => 'end of media (die-cut)',
+                0x04 => 'cutter jam',
+                0x10 => 'printer in use',
+                0x20 => 'printer turned off',
+                0x40 => 'high-voltage adapter',
+                0x80 => 'fan motor error',
+            ]),
+            $this->decodeStatusFlags($bytes[9], [
+                0x01 => 'replace media',
+                0x02 => 'expansion buffer full',
+                0x04 => 'communication error',
+                0x10 => 'cover open',
+                0x40 => 'media cannot be fed / media end detected',
+                0x80 => 'system error',
+            ])
+        );
+
+        $models = [0x38 => 'QL-800', 0x39 => 'QL-810W', 0x41 => 'QL-820NWB'];
+        $mediaTypes = [0x00 => 'no media', 0x4A => 'continuous length tape', 0x4B => 'die-cut labels'];
+        $statusTypes = [
+            0x00 => 'reply to status request', 0x01 => 'printing completed', 0x02 => 'error occurred',
+            0x04 => 'turned off', 0x05 => 'notification', 0x06 => 'phase change',
+        ];
+        $notifications = [0x00 => 'none', 0x03 => 'cooling (started)', 0x04 => 'cooling (finished)'];
+
+        return sprintf(
+            'model=%s, errors=[%s], media width=%dmm, media type=%s, media length=%dmm, ' .
+            'status type=%s, phase type=%s, notification=%s, raw=%s',
+            isset($models[$bytes[4]]) ? $models[$bytes[4]] : sprintf('unknown (0x%02X)', $bytes[4]),
+            $errors ? implode(', ', $errors) : 'none',
+            $bytes[10],
+            isset($mediaTypes[$bytes[11]]) ? $mediaTypes[$bytes[11]] : sprintf('unknown (0x%02X)', $bytes[11]),
+            $bytes[17],
+            isset($statusTypes[$bytes[18]]) ? $statusTypes[$bytes[18]] : sprintf('unknown (0x%02X)', $bytes[18]),
+            $bytes[19] === 1 ? 'printing state' : 'receiving state',
+            isset($notifications[$bytes[22]]) ? $notifications[$bytes[22]] : sprintf('unknown (0x%02X)', $bytes[22]),
+            strtoupper(bin2hex($status))
+        );
+    }
+
+    /**
+     * @param int   $value
+     * @param array $flags Map of bitmask => description.
+     * @return string[]
+     */
+    protected function decodeStatusFlags($value, array $flags)
+    {
+        $matched = [];
+
+        foreach ($flags as $mask => $description) {
+            if ($value & $mask) {
+                $matched[] = $description;
+            }
+        }
+
+        return $matched;
     }
 
     protected function getLayout()
@@ -992,6 +1185,7 @@ class VisitorBadge implements CommandInterface
         $output .= chr(27) . 'iA' . chr(1);
         $output .= chr(27) . 'iK' . chr(9);
         $output .= chr(27) . 'id' . $this->littleEndian16(35);
+        $output .= 'M' . chr(0);
         $output .= $this->twoColorRasterRows($image, $ditherMask);
         $output .= chr(26);
 
@@ -1000,11 +1194,32 @@ class VisitorBadge implements CommandInterface
 
     protected function invalidateRasterParser()
     {
+        // Per Brother's official Raster Command Reference (QL-800/810W/820NWB,
+        // v1.01, "2.1 Print data overview"): a 400-byte invalidate command is
+        // sent once at the start of every job, unconditionally, so that any
+        // partially-received command or raster data left over from a prior
+        // job/connection is skipped and the printer's parser returns to a
+        // clean "receiving state" before Initialize is sent.
         return str_repeat(chr(0), 400);
     }
 
     protected function rasterPrintInformation($rasterRows)
     {
+        // ESC i z (Print information command). Byte layout per the official
+        // spec, "4. Printing Command Details" > "ESC i z":
+        //   n1  = valid flag: 0x80 (printer recovery always on) | 0x02 (media
+        //         type valid) | 0x04 (media width valid) | 0x08 (media length
+        //         valid) = 0x8E. Deliberately omits 0x40 (priority to print
+        //         quality), which the spec states is invalid for two-color
+        //         printing.
+        //   n2  = media type: 0x0A = continuous length tape.
+        //   n3  = media width in mm (62 mm, matching printerWidthDots()).
+        //   n4  = media length in mm: 0 for continuous tape.
+        //   n5-n8 = raster line count (32-bit little-endian).
+        //   n9  = starting page: 0 (this is always page 1 of a single-page job).
+        //   n10 = fixed at 0. (A prior revision sent 2 here, which the spec
+        //         does not define for this byte; restored to the documented
+        //         value.)
         return chr(27) . 'iz' .
             chr(142) .
             chr(10) .
@@ -1012,7 +1227,7 @@ class VisitorBadge implements CommandInterface
             chr(0) .
             $this->littleEndian32($rasterRows) .
             chr(0) .
-            chr(2);
+            chr(0);
     }
 
     protected function twoColorRasterRows($image, $ditherMask = null)
