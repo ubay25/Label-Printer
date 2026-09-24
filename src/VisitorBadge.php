@@ -74,29 +74,31 @@ class VisitorBadge implements CommandInterface
      * already in, which will silently corrupt output (or compound an
      * existing wedge) if the printer is already erroring or unresponsive.
      *
-     * A reply that reports an error is unambiguous, so it is always fatal.
-     * By contrast, no reply at all is NOT fatal by default: the spec's own
-     * "Normal Flow for Network (Standard TCP/IP port) Connection" (section
-     * 5.9) is the only one of its five connection-type flow charts that does
-     * not show a status request/response exchange — many raw port-9100
-     * network paths simply don't answer this query synchronously over the
-     * print-data socket even on a healthy printer. Treating a missing reply
-     * as fatal by default would silently stop every print on such a setup,
-     * which is worse than the problem this check exists to catch. Pass
-     * $requireStatusReply=true to opt into the stricter USB/serial-style
-     * behaviour if your connection is known to reply.
+     * A reply that reports an error is unambiguous, so it is always fatal
+     * when $verifyStatus is enabled. No reply at all is a separate question,
+     * and testing against a real QL-820NWB over its network port settled
+     * it: the printer never replies to a status request over the print-data
+     * TCP connection, matching the one thing the spec's own "Normal Flow for
+     * Network (Standard TCP/IP port) Connection" (section 5.9) omits that
+     * every USB/serial flow chart includes. So $verifyStatus now defaults to
+     * FALSE — sending a status request that's never answered only adds
+     * latency (a multi-second wait every print) for zero benefit on this
+     * connection type, and there's no confirmed upside to weigh against
+     * that on a raw network socket. Pass $verifyStatus=true if you know your
+     * connection actually replies (e.g. USB/serial), and additionally
+     * $requireStatusReply=true for the strict throw-on-no-reply behaviour.
      *
      * @param resource $resource
-     * @param bool     $verifyStatus Set false only if $resource cannot do a
-     *                                blocking read (e.g. a write-only test
-     *                                double) and you accept the old
-     *                                fire-and-forget behaviour.
+     * @param bool     $verifyStatus Opt into the pre-flight status request.
+     *                                Leave false for a raw network/port-9100
+     *                                connection (see above); the write path
+     *                                below is already hardened regardless.
      * @param float    $statusTimeoutSeconds How long to wait for the printer
      *                                to answer the pre-flight status request.
      * @param bool     $requireStatusReply Throw if the printer doesn't reply
      *                                at all, instead of proceeding anyway.
      */
-    public function printTo($resource, $verifyStatus = true, $statusTimeoutSeconds = 3, $requireStatusReply = false)
+    public function printTo($resource, $verifyStatus = false, $statusTimeoutSeconds = 3, $requireStatusReply = false)
     {
         if (! is_resource($resource)) {
             throw new \InvalidArgumentException('An invalid print resource has been provided.');

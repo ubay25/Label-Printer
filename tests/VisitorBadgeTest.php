@@ -191,15 +191,14 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
             ]
         );
 
-        // php://temp is a single seekable buffer, not a duplex socket: it
-        // cannot loop a write back around to a read the way a real printer
-        // connection would reply to a status request. printTo()'s default
-        // pre-flight status check (see printTo()'s docblock) would therefore
-        // just time out waiting for a reply that can never arrive, so this
-        // test explicitly opts out of it to exercise the write path alone.
+        // printTo()'s status pre-flight defaults to disabled (see its
+        // docblock: testing against a real QL-820NWB confirmed it never
+        // replies to a status request over its network print-data
+        // connection, so requiring one there only adds a multi-second wait
+        // for zero benefit). Default args exercise that default directly.
         $stream = fopen('php://temp', 'w+');
 
-        $badge->printTo($stream, false);
+        $badge->printTo($stream);
 
         rewind($stream);
         $output = stream_get_contents($stream);
@@ -209,9 +208,9 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $this->assertEquals(chr(26), substr($output, -1));
     }
 
-    public function testPrintToWithRequireStatusReplyFailsFastWhenPrinterIsUnresponsive()
+    public function testPrintToDoesNotCheckStatusByDefault()
     {
-        $badge = new VisitorBadge(
+        $badge = $this->getMock('Talal\LabelPrinter\VisitorBadge', ['requestStatus'], [
             696,
             509,
             [
@@ -220,8 +219,21 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
                 'validity_date' => '2026-09-08',
                 'host_name' => 'Jane Smith'
             ]
-        );
+        ]);
+        $badge->expects($this->never())->method('requestStatus');
 
+        $stream = fopen('php://temp', 'w+');
+        $badge->printTo($stream);
+
+        rewind($stream);
+        $output = stream_get_contents($stream);
+        fclose($stream);
+
+        $this->assertEquals($badge->read(), $output);
+    }
+
+    public function testPrintToWithRequireStatusReplyFailsFastWhenPrinterIsUnresponsive()
+    {
         $badge = $this->getMock('Talal\LabelPrinter\VisitorBadge', ['requestStatus'], [
             696,
             509,
@@ -239,19 +251,18 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
             'Printer did not respond to a status request before printing'
         );
 
-        // requireStatusReply=true opts into the strict behaviour; it is NOT
-        // the default (see printTo()'s docblock: a missing reply is common
-        // and not by itself fatal over a raw network connection).
+        // Both verifyStatus and requireStatusReply must be explicitly opted
+        // into for this strict behaviour; neither is the default.
         $stream = fopen('php://temp', 'w+');
         $badge->printTo($stream, true, 3, true);
     }
 
-    public function testPrintToVerifiesStatusByDefaultButProceedsWhenPrinterSimplyDoesNotReply()
+    public function testPrintToWithVerifyStatusProceedsWhenPrinterSimplyDoesNotReply()
     {
-        // Default behaviour (requireStatusReply=false): a missing status
-        // reply is common on raw network/port-9100 connections and is not
-        // by itself treated as proof the printer can't accept the job, so
-        // the write should still happen.
+        // With $verifyStatus=true but the default $requireStatusReply=false:
+        // a missing status reply is common on raw network/port-9100
+        // connections and is not by itself treated as proof the printer
+        // can't accept the job, so the write should still happen.
         $badge = $this->getMock('Talal\LabelPrinter\VisitorBadge', ['requestStatus'], [
             696,
             509,
@@ -265,7 +276,7 @@ class VisitorBadgeTest extends PHPUnit_Framework_TestCase
         $badge->expects($this->once())->method('requestStatus')->willReturn(null);
 
         $stream = fopen('php://temp', 'w+');
-        $badge->printTo($stream);
+        $badge->printTo($stream, true);
 
         rewind($stream);
         $output = stream_get_contents($stream);
